@@ -51,3 +51,4 @@ if user_question:
         answer = generate_answer(user_question, faq_df)
     st.markdown("### Antwort:")
     st.write(answer)
+

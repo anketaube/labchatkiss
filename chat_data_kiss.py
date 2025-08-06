@@ -4,9 +4,9 @@ import requests
 
 # API-Key und Modell aus Streamlit Secrets laden
 API_KEY = st.secrets["ACADEMICCLOUD_API_KEY"]
-MODEL = st.secrets.get("ACADEMICCLOUD_MODEL", "Llama 3.1 8b Instruct")  # Default-Modell
+MODEL = st.secrets.get("ACADEMICCLOUD_MODEL", "Llama 3.1 8b Instruct")  # Default-Modell falls nicht gesetzt
 
-API_ENDPOINT = "https://chat-ai.academiccloud.de/v1"
+API_ENDPOINT = "https://chat-ai.academiccloud.de/v1/chat/completions"
 
 @st.cache_data
 def load_data():
@@ -50,7 +50,7 @@ Antwort:"""
         response = requests.post(API_ENDPOINT, headers=headers, json=json_data)
         response.raise_for_status()
         data = response.json()
-        # Antworttext aus der API-Antwort auslesen (an API anpassen)
+        # Antwort extrahieren (API ist OpenAI-kompatibel)
         answer = data["choices"][0]["message"]["content"].strip()
         return answer
     except Exception as e:

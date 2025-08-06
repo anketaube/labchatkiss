@@ -32,7 +32,7 @@ def load_data():
 
 faq_df = load_data()
 
-st.title("Lab Chat FAQ mit Academic Cloud API")
+st.title("DNBLab FAQ Chat mit Academic Cloud API")
 
 # Auswahl-Menü für das Modell
 selected_model = st.selectbox("Wähle ein Sprachmodell:", MODEL_OPTIONS, index=0)
@@ -78,3 +78,4 @@ if user_question:
         answer = generate_answer_academiccloud(user_question, faq_df, selected_model)
     st.markdown("### Antwort:")
     st.write(answer)
+

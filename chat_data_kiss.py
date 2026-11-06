@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import requests
+import re
 
 # API-Key aus Secrets laden
 API_KEY = st.secrets["ACADEMICCLOUD_API_KEY"]
@@ -24,6 +25,7 @@ MODEL_OPTIONS = [
 
 API_ENDPOINT = "https://chat-ai.academiccloud.de/v1/chat/completions"
 
+# 📥 Lade die FAQ-Datei **nur von GitHub**
 @st.cache_data
 def load_data():
     url = "https://github.com/anketaube/LabChatAPP/raw/main/DNBLab_FAQ.xlsx"
@@ -31,6 +33,23 @@ def load_data():
     return df
 
 faq_df = load_data()
+
+# 🎯 Sicherstellen, dass die Spalten existieren
+if 'Frage' not in faq_df.columns or 'Antwort' not in faq_df.columns:
+    st.error("❌ Die Datei auf GitHub hat keine Spalten 'Frage' oder 'Antwort'.")
+    st.stop()
+
+# 🧠 Funktion: Prüfe, ob Antwort aus der FAQ stammt
+def is_answer_from_faq(answer, faq_df):
+    # Normalisiere Antwort: entferne Groß-/Kleinschreibung, Satzzeichen
+    clean_answer = re.sub(r'[^\w\s]', '', answer.lower().strip())
+    
+    # Prüfe, ob die Antwort in den FAQ-Antworten vorkommt
+    for faq_answer in faq_df['Antwort'].astype(str):
+        clean_faq = re.sub(r'[^\w\s]', '', faq_answer.lower().strip())
+        if clean_answer in clean_faq or clean_faq in clean_answer:
+            return True
+    return False
 
 st.title("DNBLab FAQ Chat mit Academic Cloud API")
 
@@ -76,6 +95,20 @@ Antwort:"""
 if user_question:
     with st.spinner("Antwort wird generiert..."):
         answer = generate_answer_academiccloud(user_question, faq_df, selected_model)
+
     st.markdown("### Antwort:")
     st.write(answer)
 
+    # 📌 Quellenprüfung
+    st.markdown("---")
+    st.markdown("🔍 **Quelle der Antwort:**")
+
+    if is_answer_from_faq(answer, faq_df):
+        st.markdown(
+            "[🔗 DNBLab_FAQ.xlsx (GitHub)](https://github.com/anketaube/LabChatAPP/raw/main/DNBLab_FAQ.xlsx)"
+        )
+        st.markdown("💡 Diese Antwort basiert auf der offiziellen FAQ-Datei des DNBLab.")
+    else:
+        st.markdown("🤖 LLM (keine passende FAQ gefunden)")
+        st.markdown("💡 Die Antwort wurde vom Modell generiert, basierend auf allgemeinem Wissen.")
+        st.markdown("🔗 [🔗 Academic Cloud API](https://chat-ai.academiccloud.de)")

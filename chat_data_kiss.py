@@ -26,7 +26,7 @@ API_ENDPOINT = "https://chat-ai.academiccloud.de/v1/chat/completions"
 
 @st.cache_data
 def load_data():
-    url = "https://github.com/anketaube/LabChatAPP/raw/main/DNBLab_FAQ.xlsx"
+    url = "https://github.com/anketaube/LabChatAPP/raw/main/DNBLab_FAQs.xlsx"
     df = pd.read_excel(url)
     return df
 

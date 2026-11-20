@@ -38,39 +38,52 @@ def load_faq_data():
     df = pd.read_excel(BytesIO(response.content))
     return df
 
-# 🧠 Lade oder erstelle den Vektorindex
+# 🧠 Lade oder erstelle den Vektorindex (unterstützt beide Formate)
 @st.cache_data
 def load_or_create_index():
-    # Versuche, den Index von GitHub zu laden
     index_url = "https://github.com/anketaube/DNBLabChat/raw/main/dnblab_index.json"
     try:
         response = requests.get(index_url)
         response.raise_for_status()
         data = response.json()
-        st.info("✅ Vektorindex erfolgreich geladen.")
-        return data
-    except:
-        st.warning("⚠️ Kein Index gefunden. Erstelle ihn jetzt...")
-        # Erstelle den Index neu
-        df = load_faq_data()
-        model = SentenceTransformer('all-MiniLM-L6-v2')
-        documents = []
-        for idx, row in df.iterrows():
-            text = row['Antwort']
-            embedding = model.encode(text).tolist()
-            documents.append({
-                "id": str(idx),
-                "text": text,
-                "metadata": {
-                    "question": row['Frage'],
-                    "answer": row['Antwort']
-                },
-                "embedding": embedding
-            })
-        index_data = {"documents": documents}
-        # Speichere den Index (kann in GitHub gespeichert werden)
-        st.info("✅ Vektorindex wurde erfolgreich erstellt.")
-        return index_data
+
+        # ✅ Prüfe: Ist es ein Objekt mit "documents"?
+        if isinstance(data, dict) and "documents" in data:
+            st.info("✅ Vektorindex erfolgreich geladen (Format: documents).")
+            return data
+
+        # ✅ Prüfe: Ist es eine Liste (wie dein aktueller Index)?
+        elif isinstance(data, list):
+            st.info("⚠️ Index hat falsches Format. Konvertiere zu 'documents'-Struktur...")
+            return {"documents": data}
+
+        else:
+            st.error("❌ Ungültiges Index-Format. Erstelle neuen Index.")
+            return create_index_from_faq()
+
+    except Exception as e:
+        st.warning(f"⚠️ Fehler beim Laden des Index: {e}. Erstelle neuen Index.")
+        return create_index_from_faq()
+
+# 🧠 Funktion: Erstelle neuen Index aus FAQ
+def create_index_from_faq():
+    df = load_faq_data()
+    model = SentenceTransformer('all-MiniLM-L6-v2')
+    documents = []
+    for idx, row in df.iterrows():
+        text = row['Antwort']  # oder: row['Frage'] + " " + row['Antwort']
+        embedding = model.encode(text).tolist()
+        documents.append({
+            "id": str(idx),
+            "text": text,
+            "metadata": {
+                "question": row['Frage'],
+                "answer": row['Antwort']
+            },
+            "embedding": embedding
+        })
+    st.info("✅ Neuer Vektorindex wurde erfolgreich erstellt.")
+    return {"documents": documents}
 
 # 🧠 Funktion: Suche relevante Abschnitte
 def retrieve_relevant_context(query, documents, top_k=2):
@@ -160,3 +173,8 @@ if user_question:
         st.markdown("🤖 LLM (keine passende FAQ gefunden)")
         st.markdown("💡 Die Antwort wurde vom Modell generiert, basierend auf allgemeinem Wissen.")
         st.markdown("🔗 [🔗 Academic Cloud API](https://chat-ai.academiccloud.de)")
+
+# 🔍 Debug-Option (nur für Entwicklung)
+if st.checkbox("🔍 Zeige Index-Struktur (Debug)"):
+    index_data = load_or_create_index()
+    st.json(index_data)

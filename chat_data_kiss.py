@@ -1,12 +1,16 @@
 import streamlit as st
 import pandas as pd
 import requests
+import json
+import numpy as np
+from sentence_transformers import SentenceTransformer
+from io import BytesIO
 import re
 
-# API-Key aus Secrets laden
+# 📌 API-Key aus Secrets laden
 API_KEY = st.secrets["ACADEMICCLOUD_API_KEY"]
 
-# Liste der verfügbaren Modelle (bitte exakt die Modell-IDs aus der Doku verwenden)
+# 📌 Liste der verfügbaren Modelle
 MODEL_OPTIONS = [
     "meta-llama-3.1-8b-instruct",
     "internvl2.5-8b",
@@ -25,45 +29,78 @@ MODEL_OPTIONS = [
 
 API_ENDPOINT = "https://chat-ai.academiccloud.de/v1/chat/completions"
 
-# 📥 Lade die FAQ-Datei **nur von GitHub**
+# 📥 Lade die FAQ-Datei von GitHub
 @st.cache_data
-def load_data():
+def load_faq_data():
     url = "https://github.com/anketaube/LabChatAPP/raw/main/DNBLab_FAQ.xlsx"
-    df = pd.read_excel(url)
+    response = requests.get(url)
+    response.raise_for_status()
+    df = pd.read_excel(BytesIO(response.content))
     return df
 
-faq_df = load_data()
+# 🧠 Lade oder erstelle den Vektorindex
+@st.cache_data
+def load_or_create_index():
+    # Versuche, den Index von GitHub zu laden
+    index_url = "https://github.com/anketaube/DNBLabChat/raw/main/dnblab_index.json"
+    try:
+        response = requests.get(index_url)
+        response.raise_for_status()
+        data = response.json()
+        st.info("✅ Vektorindex erfolgreich geladen.")
+        return data
+    except:
+        st.warning("⚠️ Kein Index gefunden. Erstelle ihn jetzt...")
+        # Erstelle den Index neu
+        df = load_faq_data()
+        model = SentenceTransformer('all-MiniLM-L6-v2')
+        documents = []
+        for idx, row in df.iterrows():
+            text = row['Antwort']
+            embedding = model.encode(text).tolist()
+            documents.append({
+                "id": str(idx),
+                "text": text,
+                "metadata": {
+                    "question": row['Frage'],
+                    "answer": row['Antwort']
+                },
+                "embedding": embedding
+            })
+        index_data = {"documents": documents}
+        # Speichere den Index (kann in GitHub gespeichert werden)
+        st.info("✅ Vektorindex wurde erfolgreich erstellt.")
+        return index_data
 
-# 🎯 Sicherstellen, dass die Spalten existieren
-if 'Frage' not in faq_df.columns or 'Antwort' not in faq_df.columns:
-    st.error("❌ Die Datei auf GitHub hat keine Spalten 'Frage' oder 'Antwort'.")
-    st.stop()
+# 🧠 Funktion: Suche relevante Abschnitte
+def retrieve_relevant_context(query, documents, top_k=2):
+    model = SentenceTransformer('all-MiniLM-L6-v2')
+    query_embedding = model.encode(query).astype(np.float32)
 
-# 🧠 Funktion: Prüfe, ob Antwort aus der FAQ stammt
-def is_answer_from_faq(answer, faq_df):
-    # Normalisiere Antwort: entferne Groß-/Kleinschreibung, Satzzeichen
-    clean_answer = re.sub(r'[^\w\s]', '', answer.lower().strip())
-    
-    # Prüfe, ob die Antwort in den FAQ-Antworten vorkommt
-    for faq_answer in faq_df['Antwort'].astype(str):
-        clean_faq = re.sub(r'[^\w\s]', '', faq_answer.lower().strip())
-        if clean_answer in clean_faq or clean_faq in clean_answer:
-            return True
-    return False
+    similarities = []
+    for doc in documents:
+        doc_embedding = np.array(doc["embedding"], dtype=np.float32)
+        sim = np.dot(query_embedding, doc_embedding) / (
+            np.linalg.norm(query_embedding) * np.linalg.norm(doc_embedding)
+        )
+        similarities.append((sim, doc))
 
-st.title("DNBLab FAQ Chat mit Academic Cloud API")
+    similarities.sort(reverse=True)
+    top_docs = similarities[:top_k]
 
-# Auswahl-Menü für das Modell
-selected_model = st.selectbox("Wähle ein Sprachmodell:", MODEL_OPTIONS, index=0)
+    context = "\n".join([doc["text"] for sim, doc in top_docs])
+    sources = [doc["metadata"] for sim, doc in top_docs]
+    return context, sources
 
-user_question = st.text_input("Ihre Frage an das Lab-FAQ:")
+# 🧠 Funktion: Generiere Antwort mit RAG
+def generate_answer_rag(question, model, top_k=2):
+    index_data = load_or_create_index()
+    documents = index_data["documents"]
+    context, sources = retrieve_relevant_context(question, documents, top_k=top_k)
 
-def generate_answer_academiccloud(question, faq_df, model):
-    faq_context = "\n".join(f"{q}: {a}" for q, a in zip(faq_df['Frage'], faq_df['Antwort']))
-    prompt = f"""Du bist ein hilfreicher Assistent für FAQs zum DNBLab. Benutze diese FAQ als Wissen:
-{faq_context}
+    prompt = f"""Du bist ein hilfreicher Assistent für das DNBLab. Beantworte die Frage ausschließlich basierend auf den folgenden Informationen:
 
-Beantworte folgende Nutzerfrage möglichst präzise und textbasiert:
+{context}
 
 Frage: {question}
 Antwort:"""
@@ -88,26 +125,37 @@ Antwort:"""
         response.raise_for_status()
         data = response.json()
         answer = data["choices"][0]["message"]["content"].strip()
-        return answer
+        return answer, sources
     except Exception as e:
-        return f"Fehler bei der Antwortgenerierung: {e}"
+        return f"Fehler bei der Antwortgenerierung: {e}", []
+
+# 🎯 Haupt-App
+st.title("🔍 DNBLab FAQ Chat mit RAG (Retrieval-Augmented Generation)")
+
+# Auswahl-Menü für das Modell
+selected_model = st.selectbox("Wähle ein Sprachmodell:", MODEL_OPTIONS, index=0)
+
+user_question = st.text_input("Ihre Frage an das Lab-FAQ:")
 
 if user_question:
-    with st.spinner("Antwort wird generiert..."):
-        answer = generate_answer_academiccloud(user_question, faq_df, selected_model)
+    with st.spinner("🔍 Suche nach relevanten Informationen..."):
+        answer, sources = generate_answer_rag(user_question, selected_model)
 
-    st.markdown("### Antwort:")
+    st.markdown("### 💬 Antwort:")
     st.write(answer)
 
     # 📌 Quellenprüfung
     st.markdown("---")
     st.markdown("🔍 **Quelle der Antwort:**")
 
-    if is_answer_from_faq(answer, faq_df):
+    if sources:
+        st.markdown("✅ Diese Antwort basiert auf der offiziellen FAQ:")
+        for src in sources:
+            st.markdown(f"🔹 **Frage:** {src['question']}")
+            st.markdown(f"   **Antwort:** {src['answer']}")
         st.markdown(
-            "[🔗 DNBLab_FAQ.xlsx (GitHub)](https://github.com/anketaube/LabChatAPP/raw/main/DNBLab_FAQ.xlsx)"
+            f"[🔗 DNBLab_FAQ.xlsx (GitHub)](https://github.com/anketaube/LabChatAPP/raw/main/DNBLab_FAQ.xlsx)"
         )
-        st.markdown("💡 Diese Antwort basiert auf der offiziellen FAQ-Datei des DNBLab.")
     else:
         st.markdown("🤖 LLM (keine passende FAQ gefunden)")
         st.markdown("💡 Die Antwort wurde vom Modell generiert, basierend auf allgemeinem Wissen.")
